@@ -76,6 +76,10 @@ export class MarieIpc implements IMarieIPC {
     }
   }
 
+  static bindingStatement(id: number, value: any) {
+    return `${id} ${JSON.stringify(value.toString())}`
+  }
+
   /*
    * 
    *
@@ -89,7 +93,7 @@ export class MarieIpc implements IMarieIPC {
 
     let [srcId, srcAdded] = this.binding(entity.id.toString());
     if (srcAdded) {
-      statements.push(`${srcId} ${JSON.stringify(entity.id.toString())}`);
+      statements.push(MarieIpc.bindingStatement(srcId, entity.id));
     }
     
     for (const pair of Object.entries(entity)) {
@@ -98,18 +102,18 @@ export class MarieIpc implements IMarieIPC {
       // -- set rel, if not mapped 
       let [relId, relAdded] = this.binding(rel.toString());
       if (relAdded) {
-        statements.push(`${relId} ${JSON.stringify(rel.toString())}`);
+        statements.push(MarieIpc.bindingStatement(relId, rel));
       }
 
       if (typeof value === 'string') {
         var [tgtId, tgtAdded] = this.binding(value.toString());
         if (tgtAdded) {
-          statements.push(`${tgtId} ${JSON.stringify(value.toString())}`);
+          statements.push(MarieIpc.bindingStatement(tgtId, value));
         }
       } else if (typeof value === 'number') {
         var [tgtId, tgtAdded] = this.binding(value.toString());
         if (tgtAdded) {
-          statements.push(`${tgtId} ${JSON.stringify(value.toString())}`);
+          statements.push(MarieIpc.bindingStatement(tgtId, value));
         }
       } else if (Array.isArray(value)) {
         for (const bit of value) {
@@ -117,17 +121,17 @@ export class MarieIpc implements IMarieIPC {
             const [tgtBit, tgtType] = bit;
             let [tgtBitId, tgtBitAdded] = this.binding(tgtBit.toString());
             if (tgtBitAdded) {
-              statements.push(`${tgtBitId} ${JSON.stringify(tgtBit.toString())}`);
+              statements.push(MarieIpc.bindingStatement(tgtBitId, tgtBit));
             }
 
             let [tgtTypeId, tgtTypeAdded] = this.binding(tgtType.toString());
             if (tgtTypeAdded) {
-              statements.push(`${tgtTypeId} ${JSON.stringify(tgtType.toString())}`);
+              statements.push(MarieIpc.bindingStatement(tgtTypeId, tgtType));
             }
 
             let [isId, isAdded] = this.binding('is');
             if (isAdded) {
-              statements.push(`${isId} ${JSON.stringify(tgtType.toString())}`);
+              statements.push(MarieIpc.bindingStatement(isId, 'is'));
             }
 
             statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`)
@@ -135,7 +139,7 @@ export class MarieIpc implements IMarieIPC {
           } else {
             let [bitId, bitAdded] = this.binding(bit.toString());
             if (bitAdded) {
-              statements.push(`${bitId} ${JSON.stringify(bit.toString())}`);
+              statements.push(MarieIpc.bindingStatement(bitId, bit));
             }
 
             statements.push(`src ${srcId} rel ${relId} tgt ${bitId}`)
