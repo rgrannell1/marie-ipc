@@ -4,7 +4,7 @@ const ALIAS = /^\d+$/;
 const ALIAS_DECLARATION = /^\d+/;
 
 /*
- * Temporary state.
+ * Temporary state, such as alias to identity mappings
  *
  */
 export type MarieIpcState = {
@@ -21,8 +21,10 @@ export type MarieIpcState = {
 };
 
 /*
- *
- *
+ * Interface for Marie IPC. It's an isomorphism from 
+ * a custom serialisation format to triple and entity-form
+ * relationships
+ * 
  */
 interface IMarieIPC {
   maxId(): number;
@@ -54,15 +56,94 @@ export class MarieIpc implements IMarieIPC {
     return this.state.maxId;
   }
 
+  binding (identifier: string): [number, boolean] {
+    if (this.state.contentToAlias.has(identifier)) {
+      return [
+        this.state.contentToAlias.get(identifier) as number,
+        false
+      ];
+    } else {
+      let tgtId = this.maxId() + 1;
+      this.state.aliasToContent.set(tgtId, identifier);
+      this.state.contentToAlias.set(identifier, tgtId);
+
+      this.state.maxId = tgtId;
+
+      return [
+        tgtId,
+        true
+      ]
+    }
+  }
+
   /*
-   *
+   * 
    *
    */
   entityTo(entity: Entity): string {
     const statements: string[] = [];
+
+    if (!entity.hasOwnProperty('id')) {
+      throw new TypeError('id property missing from entity');
+    }
+
+    let [srcId, srcAdded] = this.binding(entity.id);
+    if (srcAdded) {
+      statements.push(`${srcId} ${JSON.stringify(entity.id)}`);
+    }
     
     for (const pair of Object.entries(entity)) {
       const [rel, value] = pair;
+
+      // -- set rel, if not mapped 
+      let [relId, relAdded] = this.binding(rel);
+      if (relAdded) {
+        statements.push(`${relId} ${JSON.stringify(rel)}`);
+      }
+
+      if (typeof value === 'string') {
+        var [tgtId, tgtAdded] = this.binding(value);
+        if (tgtAdded) {
+          statements.push(`${tgtId} ${JSON.stringify(value)}`);
+        }
+      } else if (typeof value === 'number') {
+        var [tgtId, tgtAdded] = this.binding(value.toString());
+        if (tgtAdded) {
+          statements.push(`${tgtId} ${JSON.stringify(value.toString())}`);
+        }
+      } else if (Array.isArray(value)) {
+        for (const bit of value) {
+          if (Array.isArray(bit)) {
+            const [tgtBit, tgtType] = bit;
+            let [tgtBitId, tgtBitAdded] = this.binding(tgtBit);
+            if (tgtBitAdded) {
+              statements.push(`${tgtBitId} ${JSON.stringify(tgtBit)}`);
+            }
+
+            let [tgtTypeId, tgtTypeAdded] = this.binding(tgtType);
+            if (tgtTypeAdded) {
+              statements.push(`${tgtTypeId} ${JSON.stringify(tgtType)}`);
+            }
+
+            let [isId, isAdded] = this.binding('is');
+            if (isAdded) {
+              statements.push(`${isId} ${JSON.stringify(tgtType)}`);
+            }
+
+            statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`)
+            statements.push(`src ${tgtBitId} rel ${isId} tgt ${tgtTypeId}`)
+          } else {
+            let [bitId, bitAdded] = this.binding(bit.toString());
+            if (bitAdded) {
+              statements.push(`${bitId} ${JSON.stringify(bit.toString())}`);
+            }
+
+            statements.push(`src ${srcId} rel ${relId} tgt ${bitId}`)
+          }
+        }
+      }
+
+      statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`)
     }
 
     return statements.join('\n');
@@ -93,7 +174,7 @@ export class MarieIpc implements IMarieIPC {
       throw new TypeError("triple missing tgt");
     }
 
-    let srcId, relId, tgtId = 0;
+    let srcId, relId, tgtId = -1;
 
     // -- if src isn't stored, store it and emit a binding statement
     if (this.state.contentToAlias.has(triple.src)) {
