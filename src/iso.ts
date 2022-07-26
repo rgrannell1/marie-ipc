@@ -87,24 +87,24 @@ export class MarieIpc implements IMarieIPC {
       throw new TypeError('id property missing from entity');
     }
 
-    let [srcId, srcAdded] = this.binding(entity.id);
+    let [srcId, srcAdded] = this.binding(entity.id.toString());
     if (srcAdded) {
-      statements.push(`${srcId} ${JSON.stringify(entity.id)}`);
+      statements.push(`${srcId} ${JSON.stringify(entity.id.toString())}`);
     }
     
     for (const pair of Object.entries(entity)) {
       const [rel, value] = pair;
 
       // -- set rel, if not mapped 
-      let [relId, relAdded] = this.binding(rel);
+      let [relId, relAdded] = this.binding(rel.toString());
       if (relAdded) {
-        statements.push(`${relId} ${JSON.stringify(rel)}`);
+        statements.push(`${relId} ${JSON.stringify(rel.toString())}`);
       }
 
       if (typeof value === 'string') {
-        var [tgtId, tgtAdded] = this.binding(value);
+        var [tgtId, tgtAdded] = this.binding(value.toString());
         if (tgtAdded) {
-          statements.push(`${tgtId} ${JSON.stringify(value)}`);
+          statements.push(`${tgtId} ${JSON.stringify(value.toString())}`);
         }
       } else if (typeof value === 'number') {
         var [tgtId, tgtAdded] = this.binding(value.toString());
@@ -115,19 +115,19 @@ export class MarieIpc implements IMarieIPC {
         for (const bit of value) {
           if (Array.isArray(bit)) {
             const [tgtBit, tgtType] = bit;
-            let [tgtBitId, tgtBitAdded] = this.binding(tgtBit);
+            let [tgtBitId, tgtBitAdded] = this.binding(tgtBit.toString());
             if (tgtBitAdded) {
-              statements.push(`${tgtBitId} ${JSON.stringify(tgtBit)}`);
+              statements.push(`${tgtBitId} ${JSON.stringify(tgtBit.toString())}`);
             }
 
-            let [tgtTypeId, tgtTypeAdded] = this.binding(tgtType);
+            let [tgtTypeId, tgtTypeAdded] = this.binding(tgtType.toString());
             if (tgtTypeAdded) {
-              statements.push(`${tgtTypeId} ${JSON.stringify(tgtType)}`);
+              statements.push(`${tgtTypeId} ${JSON.stringify(tgtType.toString())}`);
             }
 
             let [isId, isAdded] = this.binding('is');
             if (isAdded) {
-              statements.push(`${isId} ${JSON.stringify(tgtType)}`);
+              statements.push(`${isId} ${JSON.stringify(tgtType.toString())}`);
             }
 
             statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`)
