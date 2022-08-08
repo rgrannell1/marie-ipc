@@ -4,9 +4,9 @@
  *
  */
 export type Triple = {
-  src: string;
-  rel: string;
-  tgt: string;
+  src: any;
+  rel: any;
+  tgt: any;
 };
 
-export type Entity = Record<string, any>;
+export type Entity = Record<any, any>;

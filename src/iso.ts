@@ -21,17 +21,17 @@ export type MarieIpcState = {
 };
 
 /*
- * Interface for Marie IPC. It's an isomorphism from 
+ * Interface for Marie IPC. It's an isomorphism from
  * a custom serialisation format to triple and entity-form
  * relationships
- * 
+ *
  */
 interface IMarieIPC {
   maxId(): number;
   entityTo(entity: Entity): string;
   entityFrom(triples: string): Generator<Entity, void, unknown>;
   tripleTo(triple: Triple): string;
-  tripleFrom(triples: string): Generator<Triple, void, unknown>;
+  tripleFrom(triples: string, deref: boolean): Generator<Triple, void, unknown>;
 }
 
 export class MarieIpc implements IMarieIPC {
@@ -81,7 +81,7 @@ export class MarieIpc implements IMarieIPC {
   }
 
   /*
-   * 
+   *
    *
    */
   entityTo(entity: Entity): string {
@@ -95,11 +95,11 @@ export class MarieIpc implements IMarieIPC {
     if (srcAdded) {
       statements.push(MarieIpc.bindingStatement(srcId, entity.id));
     }
-    
+
     for (const pair of Object.entries(entity)) {
       const [rel, value] = pair;
 
-      // -- set rel, if not mapped 
+      // -- set rel, if not mapped
       let [relId, relAdded] = this.binding(rel.toString());
       if (relAdded) {
         statements.push(MarieIpc.bindingStatement(relId, rel));
@@ -116,8 +116,11 @@ export class MarieIpc implements IMarieIPC {
           statements.push(MarieIpc.bindingStatement(tgtId, value));
         }
       } else if (Array.isArray(value)) {
+        // array of targets
+
         for (const bit of value) {
           if (Array.isArray(bit)) {
+            // array of arrays
             const [tgtBit, tgtType] = bit;
             let [tgtBitId, tgtBitAdded] = this.binding(tgtBit.toString());
             if (tgtBitAdded) {
@@ -145,6 +148,7 @@ export class MarieIpc implements IMarieIPC {
             statements.push(`src ${srcId} rel ${relId} tgt ${bitId}`)
           }
         }
+        continue
       }
 
       statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`)
@@ -225,9 +229,12 @@ export class MarieIpc implements IMarieIPC {
    *
    *
    */
-  *tripleFrom(triples: string): Generator<Triple, void, unknown> {
+  *tripleFrom(triples: string, deref: boolean = false): Generator<Triple, void, unknown> {
     for (const line of triples.split("\n")) {
-      yield this.parse(line, false);
+      const triple = this.parse(line, deref);
+      if (triple) {
+        yield triple;
+      }
     }
   }
 
@@ -240,8 +247,9 @@ export class MarieIpc implements IMarieIPC {
 
     // -- starts with a alias
     if (ALIAS_DECLARATION.test(line)) {
-      const [alias, value] = line.split(" ", 2);
+      const [alias, ...value] = line.split(" ");
 
+      // -- test for a valid alias
       if (!ALIAS.test(alias)) {
         throw new SyntaxError(
           `line ${this.state.line}: non-numeric content alias provided; ${alias}`,
@@ -250,17 +258,23 @@ export class MarieIpc implements IMarieIPC {
 
       // -- minimise id exhaustion and other weirdness by just allowing incremental ids for content
       const aliasId = parseInt(alias);
-      if (aliasId !== this.state.maxId + 1) {
+
+      const nextFreeAlias = this.state.maxId + 1
+
+      if (aliasId !== nextFreeAlias) {
         throw new SyntaxError(
           `line ${this.state.line}: content alias ${aliasId} was not ${
-            this.state.maxId + 1
+            nextFreeAlias
           } as expected`,
         );
       }
 
-      this.state.maxId = aliasId;
+      try {
+        var parsed = JSON.parse(value.join(' '));
+      } catch (err) {
+        throw new Error(`line ${this.state.line}: failed to parse value ${value} as JSON`)
+      }
 
-      const parsed = JSON.parse(value);
       if (typeof parsed !== "string") {
         throw new SyntaxError(
           `line ${this.state.line}: non-string triple provided`,
@@ -272,8 +286,10 @@ export class MarieIpc implements IMarieIPC {
         );
       }
 
+      this.state.maxId = aliasId;
       this.state.aliasToContent.set(aliasId, parsed);
       this.state.contentToAlias.set(parsed, aliasId);
+      return
     }
 
     // -- starts with src | rel | tgt
@@ -326,8 +342,7 @@ export class MarieIpc implements IMarieIPC {
 
         const aliasId = parseInt(value);
 
-        this.state.maxId = aliasId;
-        this.state.triple[keyword] = aliasId;
+        (this.state.triple as any)[keyword] = aliasId;
       }
 
       // -- throw an error if any part of the triple has not been filled in

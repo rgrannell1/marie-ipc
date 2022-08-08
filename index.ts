@@ -13,9 +13,13 @@ const sample3: Entity[] = [
   }
 ];
 
-const marie = new MarieIpc();
+const marieOut = new MarieIpc();
+const marieIn = new MarieIpc();
 
 for (const entity of sample3) {
-  const x = marie.entityTo(entity);
-  console.log(x);
+  const x = marieOut.entityTo(entity);
+
+  for (const parsed of marieIn.tripleFrom(x, true)) {
+    console.log(parsed);
+  }
 }
