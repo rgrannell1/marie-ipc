@@ -1,10 +1,11 @@
 import { Entity, Triple } from "./types.ts";
 
+// Aliases associates some literal in a triple with a number "pointer"
 const ALIAS = /^\d+$/;
 const ALIAS_DECLARATION = /^\d+/;
 
 /*
- * Temporary state, such as alias to identity mappings
+ * State held by Marie's serialiser / deserialiser.
  *
  */
 export type MarieIpcState = {
@@ -15,7 +16,8 @@ export type MarieIpcState = {
     rel?: number;
     tgt?: number;
   };
-  // -- note; unbounded memory
+  // -- note; this is unbounded, and can lead to an OOM for
+  // -- sufficiently large triple-sets
   aliasToContent: Map<number, string>;
   contentToAlias: Map<string, number>;
 };
@@ -35,11 +37,14 @@ interface IMarieIPC {
 }
 
 export class MarieIpc implements IMarieIPC {
+  // keywords used in marie-IPC
   static keywords: Set<string> = new Set([
     "src",
     "rel",
     "tgt",
   ]);
+
+  // the initial state for a marie parser
   state: MarieIpcState = {
     maxId: -1,
     line: -1,
@@ -49,18 +54,26 @@ export class MarieIpc implements IMarieIPC {
   };
 
   /*
-   * Return current maximum id
+   * Return current maximum id used an alias for triple content
    *
    */
   maxId() {
     return this.state.maxId;
   }
 
-  binding (identifier: string): [number, boolean] {
+  /**
+   * Find the alias for an identifier in a triple, and return a boolean
+   * flag indicating if the binding existed prior to this call.
+   *
+   * @param identifier an identifier pulled from some triple
+   *
+   * @returns [number, boolean]
+   */
+  binding(identifier: string): [number, boolean] {
     if (this.state.contentToAlias.has(identifier)) {
       return [
         this.state.contentToAlias.get(identifier) as number,
-        false
+        false,
       ];
     } else {
       let tgtId = this.maxId() + 1;
@@ -71,13 +84,21 @@ export class MarieIpc implements IMarieIPC {
 
       return [
         tgtId,
-        true
-      ]
+        true,
+      ];
     }
   }
 
-  static bindingStatement(id: number, value: any) {
-    return `${id} ${JSON.stringify(value.toString())}`
+  /**
+   * Construct a statement aliasing an identifier
+   *
+   * @param alias a numeric alias
+   * @param identifier an identifier
+   *
+   * @returns a marie identifier-binding statement
+   */
+  static bindingStatement(alias: number, identifier: any) {
+    return `${alias} ${JSON.stringify(identifier.toString())}`;
   }
 
   /*
@@ -87,8 +108,8 @@ export class MarieIpc implements IMarieIPC {
   entityTo(entity: Entity): string {
     const statements: string[] = [];
 
-    if (!entity.hasOwnProperty('id')) {
-      throw new TypeError('id property missing from entity');
+    if (!entity.hasOwnProperty("id")) {
+      throw new TypeError("id property missing from entity");
     }
 
     let [srcId, srcAdded] = this.binding(entity.id.toString());
@@ -105,12 +126,12 @@ export class MarieIpc implements IMarieIPC {
         statements.push(MarieIpc.bindingStatement(relId, rel));
       }
 
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         var [tgtId, tgtAdded] = this.binding(value.toString());
         if (tgtAdded) {
           statements.push(MarieIpc.bindingStatement(tgtId, value));
         }
-      } else if (typeof value === 'number') {
+      } else if (typeof value === "number") {
         var [tgtId, tgtAdded] = this.binding(value.toString());
         if (tgtAdded) {
           statements.push(MarieIpc.bindingStatement(tgtId, value));
@@ -132,29 +153,29 @@ export class MarieIpc implements IMarieIPC {
               statements.push(MarieIpc.bindingStatement(tgtTypeId, tgtType));
             }
 
-            let [isId, isAdded] = this.binding('is');
+            let [isId, isAdded] = this.binding("is");
             if (isAdded) {
-              statements.push(MarieIpc.bindingStatement(isId, 'is'));
+              statements.push(MarieIpc.bindingStatement(isId, "is"));
             }
 
-            statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`)
-            statements.push(`src ${tgtBitId} rel ${isId} tgt ${tgtTypeId}`)
+            statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`);
+            statements.push(`src ${tgtBitId} rel ${isId} tgt ${tgtTypeId}`);
           } else {
             let [bitId, bitAdded] = this.binding(bit.toString());
             if (bitAdded) {
               statements.push(MarieIpc.bindingStatement(bitId, bit));
             }
 
-            statements.push(`src ${srcId} rel ${relId} tgt ${bitId}`)
+            statements.push(`src ${srcId} rel ${relId} tgt ${bitId}`);
           }
         }
-        continue
+        continue;
       }
 
-      statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`)
+      statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`);
     }
 
-    return statements.join('\n');
+    return statements.join("\n");
   }
 
   /*
@@ -229,7 +250,10 @@ export class MarieIpc implements IMarieIPC {
    *
    *
    */
-  *tripleFrom(triples: string, deref: boolean = false): Generator<Triple, void, unknown> {
+  *tripleFrom(
+    triples: string,
+    deref: boolean = false,
+  ): Generator<Triple, void, unknown> {
     for (const line of triples.split("\n")) {
       const triple = this.parse(line, deref);
       if (triple) {
@@ -259,20 +283,23 @@ export class MarieIpc implements IMarieIPC {
       // -- minimise id exhaustion and other weirdness by just allowing incremental ids for content
       const aliasId = parseInt(alias);
 
-      const nextFreeAlias = this.state.maxId + 1
+      const nextFreeAlias = this.state.maxId + 1;
 
       if (aliasId !== nextFreeAlias) {
         throw new SyntaxError(
-          `line ${this.state.line}: content alias ${aliasId} was not ${
-            nextFreeAlias
-          } as expected`,
+          `line ${this.state.line}: content alias ${aliasId} was not ${nextFreeAlias} as expected`,
         );
       }
 
       try {
-        var parsed = JSON.parse(value.join(' '));
+        var parsed = JSON.parse(value.join(" "));
+        if (typeof parsed === 'number') {
+          parsed = parsed.toString();
+        }
       } catch (err) {
-        throw new Error(`line ${this.state.line}: failed to parse value ${value} as JSON`)
+        throw new Error(
+          `line ${this.state.line}: failed to parse value ${value} as JSON`,
+        );
       }
 
       if (typeof parsed !== "string") {
@@ -289,7 +316,7 @@ export class MarieIpc implements IMarieIPC {
       this.state.maxId = aliasId;
       this.state.aliasToContent.set(aliasId, parsed);
       this.state.contentToAlias.set(parsed, aliasId);
-      return
+      return;
     }
 
     // -- starts with src | rel | tgt
