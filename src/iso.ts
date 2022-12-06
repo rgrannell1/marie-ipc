@@ -1,47 +1,19 @@
-import { Entity, Triple } from "./types.ts";
-
-// Aliases associates some literal in a triple with a number "pointer"
-const ALIAS = /^\d+$/;
-const ALIAS_DECLARATION = /^\d+/;
-
-/*
- * State held by Marie's serialiser / deserialiser.
- *
- */
-export type MarieIpcState = {
-  line: number;
-  maxId: number;
-  triple: {
-    src?: number;
-    rel?: number;
-    tgt?: number;
-  };
-  // -- note; this is unbounded, and can lead to an OOM for
-  // -- sufficiently large triple-sets
-  aliasToContent: Map<number, string>;
-  contentToAlias: Map<string, number>;
-};
+import { Content, Entity, ID, IMarieIPC, Triple } from "./types.ts";
+import { MarieIpcState } from "./state.ts";
+import { Isomorphism } from "./isomorphism.ts";
+import { parse } from "./methods/parse.ts";
+import { REL_KEYWORD, SRC_KEYWORD, TGT_KEYWORD } from "./constants.ts";
 
 /*
- * Interface for Marie IPC. It's an isomorphism from
- * a custom serialisation format to triple and entity-form
- * relationships
+ * Marie IPC class for parsing / serialising Marie IPC files.
  *
  */
-interface IMarieIPC {
-  maxId(): number;
-  entityTo(entity: Entity): string;
-  entityFrom(triples: string): Generator<Entity, void, unknown>;
-  tripleTo(triple: Triple): string;
-  tripleFrom(triples: string, deref: boolean): Generator<Triple, void, unknown>;
-}
-
 export class MarieIpc implements IMarieIPC {
   // keywords used in marie-IPC
   static keywords: Set<string> = new Set([
-    "src",
-    "rel",
-    "tgt",
+    SRC_KEYWORD,
+    REL_KEYWORD,
+    TGT_KEYWORD,
   ]);
 
   // the initial state for a marie parser
@@ -49,8 +21,7 @@ export class MarieIpc implements IMarieIPC {
     maxId: -1,
     line: -1,
     triple: {},
-    aliasToContent: new Map<number, string>(),
-    contentToAlias: new Map<string, number>(),
+    iso: new Isomorphism<ID, Content>(),
   };
 
   /*
@@ -70,16 +41,16 @@ export class MarieIpc implements IMarieIPC {
    * @returns [number, boolean]
    */
   binding(identifier: string): [number, boolean] {
-    if (this.state.contentToAlias.has(identifier)) {
+    const iso = this.state.iso;
+
+    if (iso.hasRight(identifier)) {
       return [
-        this.state.contentToAlias.get(identifier) as number,
+        iso.getLeft(identifier) as number,
         false,
       ];
     } else {
       let tgtId = this.maxId() + 1;
-      this.state.aliasToContent.set(tgtId, identifier);
-      this.state.contentToAlias.set(identifier, tgtId);
-
+      iso.set(tgtId, identifier);
       this.state.maxId = tgtId;
 
       return [
@@ -158,8 +129,12 @@ export class MarieIpc implements IMarieIPC {
               statements.push(MarieIpc.bindingStatement(isId, "is"));
             }
 
-            statements.push(`src ${srcId} rel ${relId} tgt ${tgtBitId}`);
-            statements.push(`src ${tgtBitId} rel ${isId} tgt ${tgtTypeId}`);
+            statements.push(
+              `${SRC_KEYWORD} ${srcId} ${REL_KEYWORD} ${relId} ${TGT_KEYWORD} ${tgtBitId}`,
+            );
+            statements.push(
+              `${SRC_KEYWORD} ${tgtBitId} ${REL_KEYWORD} ${isId} ${TGT_KEYWORD} ${tgtTypeId}`,
+            );
           } else {
             let [bitId, bitAdded] = this.binding(bit.toString());
             if (bitAdded) {
@@ -172,24 +147,26 @@ export class MarieIpc implements IMarieIPC {
         continue;
       }
 
-      statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`);
+      statements.push(
+        `${SRC_KEYWORD} ${srcId} ${REL_KEYWORD} ${relId} ${TGT_KEYWORD} ${tgtId}`,
+      );
     }
 
     return statements.join("\n");
   }
 
   /*
-   *
+   * Unimplemented.
    *
    */
   *entityFrom(triples: string): Generator<Entity, void, unknown> {
   }
 
   /*
-   * Convert triple to a series of MARIE-IPC statements
+   * Convert triple to a series of Marie-IPC statements
    *
    */
-  tripleTo(triple: Triple): string {
+  tripleTo(triple: Triple<string>): string {
     const statements: string[] = [];
 
     // -- check the structure of the triple
@@ -203,57 +180,57 @@ export class MarieIpc implements IMarieIPC {
       throw new TypeError("triple missing tgt");
     }
 
-    let srcId, relId, tgtId = -1;
+    let srcId, relId, tgtId: number = -1;
 
-    // -- if src isn't stored, store it and emit a binding statement
-    if (this.state.contentToAlias.has(triple.src)) {
-      srcId = this.state.contentToAlias.get(triple.src);
+    if (this.state.iso.hasRight(triple.src)) {
+      // given the identifier, load the source id
+      srcId = this.state.iso.getLeft(triple.src);
     } else {
+      // -- if src isn't stored, store it and emit a binding statement
       srcId = this.maxId() + 1;
-      this.state.aliasToContent.set(srcId, triple.src);
-      this.state.contentToAlias.set(triple.src, srcId);
+      this.state.iso.set(srcId, triple.src);
 
       statements.push(`${srcId} ${JSON.stringify(triple.src)}`);
       this.state.maxId = srcId;
     }
 
     // -- if rel isn't stored, store it and emit a binding statement
-    if (this.state.contentToAlias.has(triple.rel)) {
-      relId = this.state.contentToAlias.get(triple.rel);
+    if (this.state.iso.hasRight(triple.rel)) {
+      relId = this.state.iso.getLeft(triple.rel);
     } else {
       relId = this.maxId() + 1;
-      this.state.aliasToContent.set(relId, triple.rel);
-      this.state.contentToAlias.set(triple.rel, relId);
+      this.state.iso.set(relId, triple.rel);
 
       statements.push(`${relId} ${JSON.stringify(triple.rel)}`);
       this.state.maxId = relId;
     }
 
     // -- if tgt isn't stored, store it and emit a binding statement
-    if (this.state.contentToAlias.has(triple.tgt)) {
-      tgtId = this.state.contentToAlias.get(triple.tgt) as number;
+    if (this.state.iso.hasRight(triple.tgt)) {
+      tgtId = this.state.iso.getLeft(triple.tgt) as number;
     } else {
       tgtId = this.maxId() + 1;
-      this.state.aliasToContent.set(tgtId, triple.tgt);
-      this.state.contentToAlias.set(triple.tgt, tgtId);
+      this.state.iso.set(tgtId, triple.tgt);
 
       statements.push(`${tgtId} ${JSON.stringify(triple.tgt)}`);
       this.state.maxId = tgtId;
     }
 
-    statements.push(`src ${srcId} rel ${relId} tgt ${tgtId}`);
+    statements.push(
+      `${SRC_KEYWORD} ${srcId} ${REL_KEYWORD} ${relId} ${TGT_KEYWORD} ${tgtId}`,
+    );
 
     return statements.join("\n");
   }
 
   /*
-   *
+   * Read triples from a string, and yield parsed triples.
    *
    */
   *tripleFrom(
     triples: string,
     deref: boolean = false,
-  ): Generator<Triple, void, unknown> {
+  ): Generator<Triple<string> | Triple<number>, void, unknown> {
     for (const line of triples.split("\n")) {
       const triple = this.parse(line, deref);
       if (triple) {
@@ -263,143 +240,13 @@ export class MarieIpc implements IMarieIPC {
   }
 
   /*
-   *
+   * Parse Marie IPC and update parser state based on what is read.
    *
    */
-  parse(line: string, deref: boolean = false): Triple | undefined {
-    this.state.line++;
-
-    // -- starts with a alias
-    if (ALIAS_DECLARATION.test(line)) {
-      const [alias, ...value] = line.split(" ");
-
-      // -- test for a valid alias
-      if (!ALIAS.test(alias)) {
-        throw new SyntaxError(
-          `line ${this.state.line}: non-numeric content alias provided; ${alias}`,
-        );
-      }
-
-      // -- minimise id exhaustion and other weirdness by just allowing incremental ids for content
-      const aliasId = parseInt(alias);
-
-      const nextFreeAlias = this.state.maxId + 1;
-
-      if (aliasId !== nextFreeAlias) {
-        throw new SyntaxError(
-          `line ${this.state.line}: content alias ${aliasId} was not ${nextFreeAlias} as expected`,
-        );
-      }
-
-      try {
-        var parsed = JSON.parse(value.join(" "));
-        if (typeof parsed === 'number') {
-          parsed = parsed.toString();
-        }
-      } catch (err) {
-        throw new Error(
-          `line ${this.state.line}: failed to parse value ${value} as JSON`,
-        );
-      }
-
-      if (typeof parsed !== "string") {
-        throw new SyntaxError(
-          `line ${this.state.line}: non-string triple provided`,
-        );
-      }
-      if (this.state.aliasToContent.has(aliasId)) {
-        throw new SyntaxError(
-          `line ${this.state.line}: mapping for ${alias} already present, cannot override`,
-        );
-      }
-
-      this.state.maxId = aliasId;
-      this.state.aliasToContent.set(aliasId, parsed);
-      this.state.contentToAlias.set(parsed, aliasId);
-      return;
-    }
-
-    // -- starts with src | rel | tgt
-    if (MarieIpc.keywords.has(line.slice(0, 3))) {
-      const tokens = line.split(" ");
-
-      // -- rule out improper length sequences
-      if (tokens.length % 2 !== 0) {
-        throw new SyntaxError(
-          `line ${this.state.line}: expected key-id pairs, got ${line}`,
-        );
-      }
-
-      let sawSrc, sawRel, sawTgt = false;
-
-      // -- process triple to identifier bindings
-      for (let idx = 0; idx < tokens.length; idx += 2) {
-        let keyword = tokens[idx];
-        let value = tokens[idx + 1];
-
-        // -- check there's no repeat declarations
-        if (keyword === "src") {
-          if (sawSrc) {
-            throw new SyntaxError(
-              `line ${this.state.line}: cannot set ${keyword} multiple times in one line`,
-            );
-          }
-          sawSrc = true;
-        } else if (keyword === "rel") {
-          if (sawRel) {
-            throw new SyntaxError(
-              `line ${this.state.line}: cannot set ${keyword} multiple times in one line`,
-            );
-          }
-          sawRel = true;
-        } else if (keyword === "tgt") {
-          if (sawTgt) {
-            throw new SyntaxError(
-              `line ${this.state.line}: cannot set ${keyword} multiple times in one line`,
-            );
-          }
-          sawTgt = true;
-        }
-
-        if (!ALIAS.test(value)) {
-          throw new SyntaxError(
-            `line ${this.state.line}: non-numeric content alias provided`,
-          );
-        }
-
-        const aliasId = parseInt(value);
-
-        (this.state.triple as any)[keyword] = aliasId;
-      }
-
-      // -- throw an error if any part of the triple has not been filled in
-      if (
-        this.state.triple.src === undefined ||
-        this.state.triple.rel === undefined ||
-        this.state.triple.tgt === undefined
-      ) {
-        throw new TypeError(
-          `line ${this.state.line}: could not yield triple, as entity undefined. Triple ${line}`,
-        );
-      }
-
-      let aliasToContent = this.state.aliasToContent;
-
-      if (deref) {
-        // -- return a triple, since updated triple state was provided
-        return {
-          src: aliasToContent.get(this.state.triple.src),
-          rel: aliasToContent.get(this.state.triple.rel),
-          tgt: aliasToContent.get(this.state.triple.tgt),
-        };
-      } else {
-        // -- return a triple, since updated triple state was provided
-        return {
-          src: this.state.triple.src,
-          rel: this.state.triple.rel,
-          tgt: this.state.triple.tgt,
-        };
-      }
-    }
+  parse(
+    line: string,
+    deref: boolean = false,
+  ): Triple<string> | Triple<number> | undefined {
+    return parse(this.state, line, deref);
   }
 }
